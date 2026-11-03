@@ -43,6 +43,13 @@ lint = [
     "types-PyYAML",
     "vulture>=2.14",
 ]
+api = [
+    "fastapi>=0.110",
+    "pydantic>=2",
+    "python-multipart>=0.0.9",
+    "gunicorn>=22",
+    "uvicorn-worker>=0.2",
+]
 databases = [
     "requests>=2.31",
     "snakemake>=7.18",
