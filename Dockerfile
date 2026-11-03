@@ -16,15 +16,17 @@ RUN /opt/env/bin/pip install --no-cache-dir "/src[api]"
 ARG PLANNOTATE_DATABASE_SHA256=50b958f1e55119659a5df0eaafbbdfb0f34d29e3e48c8cdb8a50f9a344095589
 ENV PLANNOTATE_DATABASE_SHA256=${PLANNOTATE_DATABASE_SHA256}
 RUN /opt/env/bin/plannotate setupdb
+# pip (and its vendored urllib3/msgpack) is only needed to build, not to run
+RUN /opt/env/bin/python -m pip uninstall -y pip setuptools wheel
 
-FROM debian:stable-slim
-# or gcr.io/distroless/base-debian12 if you don't need a shell
+# distroless: no shell or package manager. Use the :debug-nonroot tag to get a busybox
+# shell when troubleshooting.
+FROM gcr.io/distroless/base-debian13:nonroot
 COPY --from=build /opt/env /opt/env
 COPY gunicorn.conf.py /app/gunicorn.conf.py
 WORKDIR /app
 ENV PATH=/opt/env/bin:$PATH
-RUN useradd -m app
-USER app
+USER nonroot
 EXPOSE 8000
 # no ENTRYPOINT, so "docker run <image> plannotate batch ..." still works for the CLI
 CMD ["gunicorn", "plannotate.api:app", "-c", "gunicorn.conf.py"]
