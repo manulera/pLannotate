@@ -2,13 +2,13 @@
 
 import io
 import os
+import re
 from typing import Annotated
 
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
 
 from . import __version__
 from .models import Construct
@@ -23,30 +23,6 @@ from .validation import (
 MAX_SEQUENCE_LENGTH = int(os.environ.get("MAX_SEQUENCE_LENGTH", 20000))
 CORES = int(os.environ.get("PLANNOTATE_CORES", 1))
 SNAPGENE_EXTS = [".dna"]
-
-
-class ReportRow(BaseModel):
-    sseqid: str
-    start_location: int
-    end_location: int
-    strand: int
-    percent_identity: float
-    full_length_of_feature_in_db: int
-    length_of_found_feature: int
-    percent_match_length: float
-    fragment: bool
-    database: str
-    Feature: str
-    Type: str
-    Description: str
-    sequence: str
-
-
-class AnnotateResponse(BaseModel):
-    gb_file: str
-    report: list[ReportRow]
-    version: str
-
 
 app = FastAPI(title="pLannotate", version=__version__)
 
@@ -90,7 +66,11 @@ def _read_record(filename: str, contents: bytes) -> SeqRecord:
 # the worker heartbeat, which is what lets gunicorn --timeout kill a stuck request;
 # a threadpool (plain def) would never trip it. Each worker serves one annotation
 # at a time, so concurrency is the worker count.
-@app.post("/annotate", response_model=AnnotateResponse)
+@app.post(
+    "/annotate",
+    response_class=Response,
+    responses={200: {"content": {"text/plain": {}}, "description": "GenBank file"}},
+)
 async def annotate_sequence(
     file: Annotated[UploadFile, File()],
     circular: Annotated[bool, Query()] = False,
@@ -98,8 +78,9 @@ async def annotate_sequence(
         bool,
         Query(description="faster, lower-coverage search (snapgene and fpbase only)"),
     ] = False,
-) -> AnnotateResponse:
-    record = _read_record(file.filename or "", await file.read())
+) -> Response:
+    filename = file.filename or ""
+    record = _read_record(filename, await file.read())
 
     circular = circular or record.annotations.get("topology") == "circular"
     sequence = str(record.seq)
@@ -109,12 +90,10 @@ async def annotate_sequence(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     construct = Construct(sequence, linear=not circular, fast=fast, cores=CORES)
-    report = [
-        {key.replace(" ", "_"): value for key, value in row.items()}
-        for row in construct.to_csv().to_dict(orient="records")
-    ]
-    return AnnotateResponse(
-        gb_file=construct.to_genbank(),
-        report=[ReportRow(**row) for row in report],
-        version=__version__,
+    # the upload name is user-controlled, so keep it header-safe
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", get_name_ext(filename)[0]) or "construct"
+    return Response(
+        content=construct.to_genbank(),
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{stem}.gbk"'},
     )
